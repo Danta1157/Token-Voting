@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Token Voting</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: system-ui, sans-serif; background: #0f0f0f; color: #ddd;
+               max-width: 680px; margin: 0 auto; padding: 2rem 1rem; }
+        h1   { font-size: 1.4rem; margin-bottom: 0.25rem; }
+        .sub { color: #666; font-size: 0.85rem; margin-bottom: 2rem; }
+        .card      { background: #161616; border: 1px solid #2a2a2a;
+                     border-radius: 10px; padding: 1.4rem; margin: 1rem 0; }
+        .card h2   { margin: 0 0 1rem; font-size: 1rem; color: #eee; }
+        button     { background: #2563eb; color: #fff; border: none; border-radius: 6px;
+                     padding: 0.55rem 1.2rem; cursor: pointer; font-size: 0.85rem;
+                     margin-top: 0.5rem; }
+        button:disabled { background: #222; color: #555; cursor: not-allowed; }
+        input, select   { width: 100%; padding: 0.5rem 0.75rem; background: #111;
+                          border: 1px solid #333; border-radius: 6px; color: #ddd;
+                          font-size: 0.85rem; margin-top: 0.5rem; }
+        .candidate      { border: 1px solid #2a2a2a; border-radius: 8px;
+                          padding: 1rem; margin: 0.6rem 0; }
+        .candidate h3   { margin: 0 0 0.25rem; font-size: 0.95rem; color: #eee; }
+        .cand-desc      { font-size: 0.8rem; color: #666; margin-bottom: 0.75rem; }
+        .bar-wrap       { background: #222; border-radius: 4px; height: 6px; margin: 0.5rem 0; }
+        .bar            { background: #2563eb; height: 6px; border-radius: 4px;
+                          transition: width 0.5s; }
+        .vote-count     { font-size: 0.78rem; color: #555; }
+        #status         { font-size: 0.82rem; margin-top: 0.75rem; min-height: 1.2em; color: #888; }
+        #status.err     { color: #f87171; }
+        #status.ok      { color: #4ade80; }
+        .addr           { font-size: 0.75rem; font-family: monospace; color: #555;
+                          word-break: break-all; }
+    </style>
+</head>
+<body>
+    <h1>Token Voting</h1>
+    <p class="sub">Cast weighted votes using your ERC-20 tokens.</p>
+
+    <div class="card">
+        <h2>Wallet</h2>
+        <button id="connectBtn" onclick="connectWallet()">Connect MetaMask</button>
+        <p class="addr" id="walletAddr">Not connected</p>
+        <p style="margin:0.5rem 0 0;font-size:0.85rem">
+            Token balance: <strong id="tokenBal">&mdash;</strong>
+        </p>
+        <p style="margin:0.25rem 0 0;font-size:0.85rem">
+            Voting: <strong id="votingStatus">&mdash;</strong>
+        </p>
+    </div>
+
+    <div class="card">
+        <h2>Candidates</h2>
+        <div id="candidateList">
+            <p style="color:#555;font-size:0.85rem">
+                Connect wallet to load candidates.
+            </p>
+        </div>
+    </div>
+
+    <div class="card" id="voteCard" style="display:none">
+        <h2>Cast Your Vote</h2>
+        <select id="candidateSelect">
+            <option value="">Select a candidate</option>
+        </select>
+        <input type="number" id="voteAmount"
+               placeholder="Tokens to commit (e.g. 100)" min="1" />
+        <button onclick="castVote()">Approve & Vote</button>
+        <p id="status"></p>
+    </div>
+
+    <script src="https://unpkg.com/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+    <script>
+        // ── Replace with your deployed addresses ──────────────────
+        const VOTING_ADDRESS = "0xC693718aaea644c2A7D300860605Df5a15Af82Fb";
+        const TOKEN_ADDRESS  = "0xe537C2f90E72156F7DA9d85c427c52d91dD87713";
+        // ─────────────────────────────────────────────────────────
+
+        const VOTING_ABI = [
+            "function votingOpen() view returns (bool)",
+            "function getCandidateCount() view returns (uint256)",
+            "function getCandidate(uint256 id) view returns (string name, string description, uint256 totalVotes)",
+            "function hasVoted(address) view returns (bool)",
+            "function vote(uint256 candidateId, uint256 amount)",
+            "event VoteCast(address indexed voter, uint256 indexed candidateId, uint256 weight)"
+        ];
+        const TOKEN_ABI = [
+            "function balanceOf(address) view returns (uint256)",
+            "function symbol() view returns (string)",
+            "function approve(address spender, uint256 amount) returns (bool)"
+        ];
+
+        let provider, signer, votingContract, tokenContract, userAddress;
+
+        async function connectWallet() {
+            if (!window.ethereum) { setStatus("MetaMask not found.", "err"); return; }
+            provider = new ethers.providers.Web3Provider(window.ethereum);
+            await provider.send("eth_requestAccounts", []);
+            const network = await provider.getNetwork();
+            if (network.chainId !== 11155111) {
+                setStatus("Switch MetaMask to Sepolia and try again.", "err");
+                return;
+            }
+            signer      = provider.getSigner();
+            userAddress = await signer.getAddress();
+            document.getElementById("connectBtn").textContent = "Connected";
+            document.getElementById("connectBtn").disabled    = true;
+            document.getElementById("walletAddr").textContent = userAddress;
+
+            votingContract = new ethers.Contract(VOTING_ADDRESS, VOTING_ABI, signer);
+            tokenContract  = new ethers.Contract(TOKEN_ADDRESS,  TOKEN_ABI,  signer);
+
+            await loadData();
+            votingContract.on("VoteCast", async () => await loadData());
+        }
+
+        async function loadData() {
+            const [count, open, voted, bal, sym] = await Promise.all([
+                votingContract.getCandidateCount(),
+                votingContract.votingOpen(),
+                votingContract.hasVoted(userAddress),
+                tokenContract.balanceOf(userAddress),
+                tokenContract.symbol()
+            ]);
+
+            document.getElementById("tokenBal").textContent =
+                ethers.utils.formatUnits(bal, 18) + " " + sym;
+            document.getElementById("votingStatus").textContent =
+                open ? "Open" : "Closed";
+
+            // Accumulate total weight for percentage bars
+            let totalWeight = ethers.BigNumber.from(0);
+            const data = [];
+            for (let i = 0; i < count; i++) {
+                const [name, desc, votes] = await votingContract.getCandidate(i);
+                data.push({ name, desc, votes });
+                totalWeight = totalWeight.add(votes);
+            }
+
+            // Render candidate cards
+            const list   = document.getElementById("candidateList");
+            const select = document.getElementById("candidateSelect");
+            list.innerHTML   = "";
+            select.innerHTML = "<option value=''>Select a candidate</option>";
+
+            data.forEach((c, i) => {
+                const pct = totalWeight.gt(0)
+                    ? Math.round(c.votes.mul(100).div(totalWeight).toNumber())
+                    : 0;
+                list.innerHTML +=
+                    `<div class="candidate">` +
+                    `  <h3>${c.name}</h3>` +
+                    `  <p class="cand-desc">${c.desc}</p>` +
+                    `  <div class="bar-wrap"><div class="bar" style="width:${pct}%"></div></div>` +
+                    `  <span class="vote-count">` +
+                    `    ${ethers.utils.formatUnits(c.votes, 18)} tokens (${pct}%)` +
+                    `  </span>` +
+                    `</div>`;
+                select.innerHTML += `<option value="${i}">${c.name}</option>`;
+            });
+
+            const voteCard = document.getElementById("voteCard");
+            voteCard.style.display = (open && !voted) ? "block" : "none";
+            if (voted && open) setStatus("You have already voted.", "");
+            if (!open)         setStatus("Voting is closed.", "");
+        }
+
+        async function castVote() {
+            const candidateId = document.getElementById("candidateSelect").value;
+            const amountStr   = document.getElementById("voteAmount").value;
+            if (!candidateId)                  { setStatus("Select a candidate.", "err"); return; }
+            if (!amountStr || +amountStr <= 0) { setStatus("Enter an amount > 0.", "err"); return; }
+
+            const amount = ethers.utils.parseUnits(amountStr, 18);
+            try {
+                // TODO: Step 1 — approve the voting contract to spend the tokens
+                // TODO: Step 2 — cast the vote
+                // TODO: Step 3 — show a success message and reload the data
+            } catch (err) {
+                setStatus(err.reason || err.message, "err");
+            }
+        }
+
+        function setStatus(msg, type) {
+            const el = document.getElementById("status");
+            el.textContent = msg;
+            el.className   = type;
+        }
+    </script>
+</body>
+</html>

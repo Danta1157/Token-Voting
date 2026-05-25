@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>My Token Dashboard</title>
+        <style>
+            body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; }
+            button { padding: 10px 20px; margin: 8px 0; cursor: pointer; background: #6366f1; color: white; border: none; border-radius: 6px; }
+            input { padding: 8px; width: 100%; margin: 4px 0; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+            .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin: 16px 0; }
+            #status { color: #6b7280; font-size: 14px; margin-top: 8px; }    
+        </style>
+    </head>
+    <body>
+        <h1>My Token Dashboard</h1>
+
+
+        <div class="card">
+            <h2>Wallet</h2>
+            <button onclick="connectWallet()">Connect MetaMask</button>
+            <p id="walletAddress">Not Connected</p>
+            <p>Your Balance: <strong id="userBalance">-</strong></p>
+        </div>
+
+        <div class="card">
+            <h2>Token Info</h2>
+            <p>Name: <strong id="tokenName">-</strong></p>
+            <p>Symbol: <strong id="tokenSymbol">-</strong></p>
+            <p>Total Supply: <strong id="totalSupply">-</strong></p>
+        </div>
+
+        <div class="card">
+            <h2>Send Tokens</h2>
+            <input type="text" id="recipientAddress" placeholder="Recipient Address (0x...)">
+            <input type="number" id="sendAmount" placeholder="Amount to Send">
+            <button onclick="sendTokens()">Send</button>
+            <p id="status"></p>
+        </div>
+
+        <script src="https://unpkg.com/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+        <script>
+            const CONTRACT_ADDRESS = '0xe537C2f90E72156F7DA9d85c427c52d91dD87713';
+            const ABI = [
+                "function name() view returns (string)",
+            "function symbol() view returns (string)",
+            "function totalSupply() view returns (uint256)",
+            "function balanceOf(address) view returns (uint256)",
+            "function transfer(address to, uint256 amount) returns (bool)",
+            "event Transfer(address indexed from, address indexed to, uint256 value)"
+            ];
+
+            let provider, signer, contract;
+
+            async function connectWallet() {
+                provider = new ethers.providers.Web3Provider(window.ethereum);
+                await provider.send("eth_requestAccounts", []);
+                const network = await provider.getNetwork();
+                if (network.chainId !== 11155111) {
+                    setStatus('Wrong network. Please switch MetaMask to Sepolia and refresh.');
+                    return;
+                }
+                signer = provider.getSigner();
+                const address = await signer.getAddress();
+                document.getElementById('walletAddress').textContent = address;
+
+                contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+
+                document.getElementById('tokenName').textContent = await contract.name();
+                document.getElementById('tokenSymbol').textContent = await contract.symbol();
+
+                const supply = await contract.totalSupply();
+                document.getElementById('totalSupply').textContent = ethers.utils.formatUnits(supply, 18) + " tokens";
+
+                await refreshBalance(address);
+
+                contract.removeAllListeners('Transfer');
+                contract.on('Transfer', async (from, to, value) => {
+                    const userAddress = await signer.getAddress();
+                    if (to.toLowerCase() === userAddress.toLowerCase()) {
+                        await refreshBalance(userAddress);
+                        setStatus('Received ' + ethers.utils.formatUnits(value, 18) + ' tokens');
+                    }
+                });
+            }
+
+            async function refreshBalance(address) {
+                const balance = await contract.balanceOf(address);
+                const symbol = await contract.symbol();
+                document.getElementById('userBalance').textContent = ethers.utils.formatUnits(balance, 18) + " " + symbol;
+            }
+
+            async function sendTokens() {
+                if (!contract) {
+                    setStatus('Please connect your wallet first.');
+                    return;
+                }
+                const recipient = document.getElementById('recipientAddress').value;
+                const amount = document.getElementById('sendAmount').value;
+
+                if (!recipient || !amount) {
+                    setStatus('Please enter recipient address and amount.');
+                    return;
+                }
+
+                try {
+                    setStatus('Sending tokens...');
+                    const tx = await contract.transfer(recipient, ethers.utils.parseUnits(amount, 18));
+                    setStatus("Waiting for transaction confirmation...");
+                    await tx.wait();
+                    setStatus('Sent! Tx: ' + tx.hash);
+                    await refreshBalance(await signer.getAddress());
+                } catch (error) {
+                    setStatus('Error: ' + error.message);
+                }
+            }
+
+            function setStatus(message) {
+                document.getElementById('status').textContent = message;
+            }
+        </script>
+</body>
+</html>
