@@ -1,4 +1,4 @@
-# Token-Weighted Governance Voting dApp
+# Token-Weighted Voting System
 ## Overview
 The project demonstrates a simplified governance-style voting dApp where participants cast weighted votes by committing ERC-20 tokens. The candidate with the highest accumulated token-weight wins.
 
