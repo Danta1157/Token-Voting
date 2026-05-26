@@ -74,7 +74,7 @@
     <script src="https://unpkg.com/ethers@5.7.2/dist/ethers.umd.min.js"></script>
     <script>
         // ── Replace with your deployed addresses ──────────────────
-        const VOTING_ADDRESS = "0xC693718aaea644c2A7D300860605Df5a15Af82Fb";
+        const VOTING_ADDRESS = "0x35B93bf1699B56fcb601a901cdBEB2Cc121EaF6D";
         const TOKEN_ADDRESS  = "0xe537C2f90E72156F7DA9d85c427c52d91dD87713";
         // ─────────────────────────────────────────────────────────
 
@@ -175,9 +175,14 @@
 
             const amount = ethers.utils.parseUnits(amountStr, 18);
             try {
-                // TODO: Step 1 — approve the voting contract to spend the tokens
-                // TODO: Step 2 — cast the vote
-                // TODO: Step 3 — show a success message and reload the data
+                const approveTx = await tokenContract.approve(VOTING_ADDRESS, amount);
+                await approveTx.wait();
+
+                const voteTx = await votingContract.vote(candidateId, amount);
+                await voteTx.wait();
+
+                setStatus("Vote cast successfully!", "ok");
+                await loadData();
             } catch (err) {
                 setStatus(err.reason || err.message, "err");
             }
